@@ -820,6 +820,16 @@ config CGROUP_RDMA
 	  Attaching processes with active RDMA resources to the cgroup
 	  hierarchy is allowed even if can cross the hierarchy's limit.
 
+config CGROUP_NVM
+	bool "NVM controller"
+	help
+	  Provides enforcement of nvm resources managed by kernel module.
+	  It is fairly easy for consumers to exhaust nvm resources, which
+	  can result into resource unavailability to other consumers.
+	  NVM controller is designed to stop this from happening.
+	  Attaching processes with active nvm resources to the cgroup
+	  hierarchy is allowed even if can cross the hierarchy's limit.
+
 config CGROUP_FREEZER
 	bool "Freezer controller"
 	help

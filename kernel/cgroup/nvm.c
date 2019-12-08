@@ -49,8 +49,8 @@ struct nvmcg_zone_list {
 
 /* resource tracker for each resource of nvm cgroup */
 struct nvmcg_resource {
-	int max;
-	int usage;
+	u32 max;
+	u32 usage;
 	struct list_head zoneids;
 };
 
@@ -251,6 +251,8 @@ void nvmcg_uncharge_space(struct nvm_cgroup *cg,
 		     u32 zoneid,
 		     u32 pages)
 {
+	if (cg == NULL)
+		cg = get_current_nvmcg();
 	nvmcg_uncharge_hierarchy(cg, device, NULL, zoneid, pages);
 }
 EXPORT_SYMBOL(nvmcg_uncharge_space);
@@ -284,7 +286,7 @@ int nvmcg_try_charge_space(struct nvm_cgroup **nvmcg,
 	struct nvm_cgroup *cg, *p;
 	struct nvmcg_resource_pool *rpool;
 	struct nvmcg_zone_list *zone;
-	s64 new;
+	u64 new;
 	int ret = 0;
 
 	/*
@@ -298,18 +300,25 @@ int nvmcg_try_charge_space(struct nvm_cgroup **nvmcg,
 		rpool = get_cg_rpool_locked(p, device);
 		if (IS_ERR(rpool)) {
 			ret = PTR_ERR(rpool);
+			pr_err("Fail to get the resouce pool of device : %s.\n",
+			       device->name);
 			goto err;
 		} else {
 			if (zoneid != 0) {
 				list_for_each_entry(zone, &(rpool->resources[0].zoneids),resoure_node)
 					if (zone->zoneid == zoneid) {
-						return 0;
+						goto out;
 					}
 			}
 
 			new = rpool->resources[0].usage + pages;
 			if (new > rpool->resources[0].max) {
 				ret = -EAGAIN;
+				pr_err("NVM CGROUP: new = %llu, current = %u, max = %u, MAX = %u.\n", 
+				       new,
+				       rpool->resources[0].usage,
+				       rpool->resources[0].max,
+				       U32_MAX);
 				goto err;
 			} else {
 				rpool->resources[0].usage = new;
@@ -323,6 +332,7 @@ int nvmcg_try_charge_space(struct nvm_cgroup **nvmcg,
 			}
 		}
 	}
+out:
 	mutex_unlock(&nvmcg_mutex);
 
 	*nvmcg = cg;

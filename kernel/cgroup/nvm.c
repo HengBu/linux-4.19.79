@@ -17,6 +17,7 @@
 #include <linux/cgroup.h>
 #include <linux/parser.h>
 #include <linux/cgroup_nvm.h>
+#include <linux/bitmap.h>
 
 #define NVMCG_MAX_STR "max"
 
@@ -51,7 +52,7 @@ struct nvmcg_zone_list {
 struct nvmcg_resource {
 	u32 max;
 	u32 usage;
-	struct list_head zoneids;
+	unsigned long *zone_bitmap;
 };
 
 /*
@@ -139,6 +140,7 @@ static struct nvmcg_resource_pool *
 get_cg_rpool_locked(struct nvm_cgroup *cg, struct nvmcg_device *device)
 {
 	struct nvmcg_resource_pool *rpool;
+	pr_info("%s device_name= %s size=%d.\n", __func__, device->name, device->size);
 
 	rpool = find_cg_rpool_locked(cg, device);
 	if (rpool)
@@ -150,7 +152,7 @@ get_cg_rpool_locked(struct nvm_cgroup *cg, struct nvmcg_device *device)
 
 	rpool->device = device;
 	set_all_resource_max_limit(rpool);
-	INIT_LIST_HEAD(& (rpool->resources[0].zoneids));
+	rpool->resources[0].zone_bitmap = bitmap_zalloc(device->size, 0);
 
 	INIT_LIST_HEAD(&rpool->cg_node);
 	INIT_LIST_HEAD(&rpool->dev_node);
@@ -176,7 +178,6 @@ uncharge_cg_locked(struct nvm_cgroup *cg,
 		   u32 pages)
 {
 	struct nvmcg_resource_pool *rpool;
-	struct nvmcg_zone_list *zone, *tmp;
 
 	rpool = find_cg_rpool_locked(cg, device);
 
@@ -193,12 +194,7 @@ uncharge_cg_locked(struct nvm_cgroup *cg,
 	rpool->resources[0].usage -= pages;
 
 	if (zoneid != 0) {
-		list_for_each_entry_safe(zone, tmp, &(rpool->resources[0].zoneids),resoure_node)
-			if (zone->zoneid == zoneid) {
-				list_del(&zone->resoure_node);
-				kfree(zone);
-				break;
-			}
+		bitmap_clear(rpool->resources[0].zone_bitmap, zoneid, 1);
 	}
 
 	/*
@@ -285,7 +281,6 @@ int nvmcg_try_charge_space(struct nvm_cgroup **nvmcg,
 {
 	struct nvm_cgroup *cg, *p;
 	struct nvmcg_resource_pool *rpool;
-	struct nvmcg_zone_list *zone;
 	u64 new;
 	int ret = 0;
 
@@ -294,6 +289,12 @@ int nvmcg_try_charge_space(struct nvm_cgroup **nvmcg,
 	 * accounting happens on css.
 	 */
 	cg = get_current_nvmcg();
+	if (device == NULL) 
+	{
+		pr_err("%s device is NULL!.\n", __func__);
+		return -1;
+	}
+	pr_info("%s device_name= %s zone_id=%d.\n", __func__, device->name, zoneid);
 
 	mutex_lock(&nvmcg_mutex);
 	for (p = cg; p; p = parent_nvmcg(p)) {
@@ -305,10 +306,9 @@ int nvmcg_try_charge_space(struct nvm_cgroup **nvmcg,
 			goto err;
 		} else {
 			if (zoneid != 0) {
-				list_for_each_entry(zone, &(rpool->resources[0].zoneids),resoure_node)
-					if (zone->zoneid == zoneid) {
-						goto out;
-					}
+				if (test_bit(zoneid, rpool->resources[0].zone_bitmap)) {
+				    goto out;
+				}
 			}
 
 			new = rpool->resources[0].usage + pages;
@@ -324,10 +324,7 @@ int nvmcg_try_charge_space(struct nvm_cgroup **nvmcg,
 				rpool->resources[0].usage = new;
 				rpool->usage_sum += pages;
 				if (zoneid != 0) {
-					zone = kmalloc(sizeof(struct nvmcg_zone_list), GFP_KERNEL);
-					zone->zoneid = zoneid;
-					INIT_LIST_HEAD(&zone->resoure_node);
-					list_add_tail(&zone->resoure_node, &rpool->resources[0].zoneids);
+					bitmap_set(rpool->resources[0].zone_bitmap, zoneid, 1);
 				}
 			}
 		}
@@ -360,6 +357,7 @@ int nvmcg_register_device(struct nvmcg_device *device)
 	INIT_LIST_HEAD(&device->dev_node);
 	INIT_LIST_HEAD(&device->rpools);
 
+	pr_info("%s device_name= %s.\n", __func__, device->name);
 	mutex_lock(&nvmcg_mutex);
 	list_add_tail(&device->dev_node, &nvmcg_devices);
 	mutex_unlock(&nvmcg_mutex);
@@ -384,6 +382,7 @@ void nvmcg_unregister_device(struct nvmcg_device *device)
 	 * Synchronize with any active resource settings,
 	 * usage query happening via configfs.
 	 */
+	pr_info("%s device_name= %s.\n", __func__, device->name);
 	mutex_lock(&nvmcg_mutex);
 	list_del_init(&device->dev_node);
 

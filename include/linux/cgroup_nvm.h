@@ -32,6 +32,7 @@ struct nvm_cgroup {
 struct nvmcg_device {
 	struct list_head	dev_node;
 	struct list_head	rpools;
+	u32			size;
 	char			*name;
 };
 
